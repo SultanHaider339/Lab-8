@@ -6,9 +6,9 @@ import tensorflow as tf
 
 
 # ============================================================
-# Optional Hugging Face model settings
+# Optional Hugging Face Model Settings
 # ============================================================
-# Agar aap ne apna TensorFlow/Keras model Hugging Face par upload kiya hai,
+# Agar aap apna TensorFlow/Keras model Hugging Face par upload karte hain,
 # to direct public URL yahan paste kar dein:
 #
 # Example:
@@ -36,15 +36,19 @@ def clean_label(line: str) -> str:
     Supports labels like:
     0 cat
     1 dog
+
     OR:
+
     cat
     dog
     """
     line = line.strip()
+
     if not line:
         return ""
 
     parts = line.split(" ", 1)
+
     if len(parts) == 2 and parts[0].isdigit():
         return parts[1].strip()
 
@@ -54,15 +58,20 @@ def clean_label(line: str) -> str:
 def file_name_from_url(url: str, fallback: str) -> str:
     parsed = urllib.parse.urlparse(url)
     name = os.path.basename(parsed.path)
-    return name if name else fallback
+
+    if name:
+        return name
+
+    return fallback
 
 
 @st.cache_resource(show_spinner="Loading AI model...")
 def load_ai_model():
     """
     If HF_MODEL_URL is provided, load TensorFlow/Keras model from Hugging Face direct URL.
-    Otherwise, use TensorFlow/Keras free MobileNetV2 model.
+    Otherwise, use TensorFlow/Keras MobileNetV2 model.
     """
+
     if HF_MODEL_URL:
         model_file_name = file_name_from_url(HF_MODEL_URL, "model.keras")
 
@@ -72,12 +81,14 @@ def load_ai_model():
         )
 
         model = tf.keras.models.load_model(model_path, compile=False)
+
         return model, "custom_hf"
 
     model = tf.keras.applications.MobileNetV2(
         weights="imagenet",
         input_shape=(DEFAULT_IMAGE_SIZE, DEFAULT_IMAGE_SIZE, 3)
     )
+
     return model, "mobilenetv2_imagenet"
 
 
@@ -87,6 +98,7 @@ def load_labels():
     Optional labels.txt from Hugging Face.
     One class per line is recommended.
     """
+
     if not HF_LABELS_URL:
         return []
 
@@ -98,9 +110,11 @@ def load_labels():
     )
 
     labels = []
+
     with tf.io.gfile.GFile(labels_path, "r") as file:
         for line in file:
             label = clean_label(line)
+
             if label:
                 labels.append(label)
 
@@ -112,22 +126,35 @@ def get_model_image_size(model) -> tuple[int, int]:
     Reads image height/width from model input shape.
     Falls back to 224x224.
     """
+
     input_shape = model.input_shape
 
     if isinstance(input_shape, list):
         input_shape = input_shape[0]
 
-    height = input_shape[1] if len(input_shape) > 1 and input_shape[1] else DEFAULT_IMAGE_SIZE
-    width = input_shape[2] if len(input_shape) > 2 and input_shape[2] else DEFAULT_IMAGE_SIZE
+    height = DEFAULT_IMAGE_SIZE
+    width = DEFAULT_IMAGE_SIZE
 
-    return int(height), int(width)
+    if len(input_shape) > 1 and input_shape[1]:
+        height = int(input_shape[1])
+
+    if len(input_shape) > 2 and input_shape[2]:
+        width = int(input_shape[2])
+
+    return height, width
 
 
-def preprocess_image(file_bytes: bytes, height: int, width: int, model_type: str, custom_preprocess: str):
+def preprocess_image(
+    file_bytes: bytes,
+    height: int,
+    width: int,
+    model_type: str,
+    custom_preprocess: str
+):
     """
     Uses TensorFlow only for image decoding and preprocessing.
-    No PIL, no NumPy, no requests, no transformers.
     """
+
     image = tf.io.decode_image(
         file_bytes,
         channels=3,
@@ -148,6 +175,7 @@ def preprocess_image(file_bytes: bytes, height: int, width: int, model_type: str
             image = image
 
     image = tf.expand_dims(image, axis=0)
+
     return image
 
 
@@ -155,6 +183,7 @@ def normalize_scores(raw_output):
     """
     Converts logits or probabilities into probability-like scores.
     """
+
     scores = tf.convert_to_tensor(raw_output)
 
     if len(scores.shape) > 2:
@@ -167,9 +196,9 @@ def normalize_scores(raw_output):
     total_score = float(tf.reduce_sum(scores).numpy())
 
     looks_like_probabilities = (
-        min_score >= 0.0 and
-        max_score <= 1.0 and
-        0.98 <= total_score <= 1.02
+        min_score >= 0.0
+        and max_score <= 1.0
+        and 0.98 <= total_score <= 1.02
     )
 
     if not looks_like_probabilities:
@@ -188,9 +217,15 @@ def predict_custom_model(model, image_batch, labels):
     values, indices = tf.math.top_k(scores, k=top_k)
 
     results = []
+
     for score, index in zip(values.numpy(), indices.numpy()):
         index = int(index)
-        label = labels[index] if index < len(labels) else f"Class {index}"
+
+        if index < len(labels):
+            label = labels[index]
+        else:
+            label = f"Class {index}"
+
         results.append((label, float(score)))
 
     return results
@@ -199,13 +234,14 @@ def predict_custom_model(model, image_batch, labels):
 def predict_mobilenetv2(model, image_batch):
     predictions = model.predict(image_batch, verbose=0)
 
-    decoded = tf.keras.applications.mobilenet_v2.decode_predictions(
+    decoded_predictions = tf.keras.applications.mobilenet_v2.decode_predictions(
         predictions,
         top=5
     )[0]
 
     results = []
-    for _, label, score in decoded:
+
+    for _, label, score in decoded_predictions:
         label = label.replace("_", " ").title()
         results.append((label, float(score)))
 
@@ -227,15 +263,17 @@ def show_results(results):
     st.bar_chart(chart_data)
 
     st.write("Detailed scores:")
+
     for label, score in results:
         st.write(f"- **{label}**: {score * 100:.2f}%")
 
 
 # ============================================================
-# UI
+# Streamlit UI
 # ============================================================
 
 st.title("🤖 AI Image Classifier")
+
 st.write(
     "Upload an image and this AI model will classify it. "
     "This app uses TensorFlow inference and does not use any paid API."
@@ -256,9 +294,10 @@ with st.sidebar:
     else:
         st.info("Using TensorFlow MobileNetV2 default model")
         st.caption(
-            "For strict Hugging Face usage, upload a TensorFlow/Keras model "
-            "to a public HF repo and set HF_MODEL_URL."
+            "Agar Hugging Face model use karna hai, to apna public "
+            "TensorFlow/Keras `.keras` ya `.h5` model URL set karein."
         )
+
         custom_preprocess = "Scale -1 to 1"
 
     st.divider()
@@ -280,10 +319,11 @@ try:
     if uploaded_file is not None:
         file_bytes = uploaded_file.getvalue()
 
+        # Fixed for older Streamlit versions
         st.image(
             file_bytes,
             caption="Uploaded Image",
-            use_container_width=True
+            use_column_width=True
         )
 
         with st.spinner("AI is analyzing the image..."):
